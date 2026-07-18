@@ -6,7 +6,7 @@ Download the Windows installer, click a few times, and chat with an open model â
 
 ## Download (Windows)
 
-Grab the latest **`LocLM_*-x64-setup.exe`** from [Releases](../../releases).
+Grab the latest **`LocLM-Setup.exe`** from [Releases](https://github.com/ClarkJgill/LocLM/releases).
 
 1. Run the installer  
 2. Open LocLM  
