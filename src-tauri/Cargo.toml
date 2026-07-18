@@ -1,6 +1,6 @@
 [package]
 name = "loclm"
-version = "0.1.0"
+version = "0.2.0"
 description = "LocLM — run local LLMs with zero setup friction"
 authors = ["LocLM"]
 edition = "2021"

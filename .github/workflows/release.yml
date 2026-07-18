@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Fetch llama.cpp sidecar
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/fetch-llama.ps1
+
+      - name: Build Tauri installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional Authenticode signing (set repo secrets to enable):
+          # TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          # Or Windows cert: WINDOWS_CERTIFICATE / WINDOWS_CERTIFICATE_PASSWORD
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: LocLM ${{ github.ref_name }}
+          releaseBody: |
+            ## LocLM ${{ github.ref_name }}
+
+            Download **LocLM-Setup.exe** below.
+
+            > **Signing note:** If the installer is not Authenticode-signed, Windows SmartScreen may warn on first run — choose *More info → Run anyway*. Code signing is the long-term fix; until a certificate is configured in CI secrets, treat this as an interim release path.
+          releaseDraft: false
+          prerelease: false
+          args: --bundles nsis

@@ -16,6 +16,15 @@ pub struct InferenceSettings {
     pub max_tokens: u32,
     /// True once the user has saved custom values (so we don't overwrite on next launch).
     pub user_customized: bool,
+    /// Last successfully run model catalog id.
+    #[serde(default)]
+    pub last_model_id: Option<String>,
+    /// User dismissed first-run tip / has completed onboarding path.
+    #[serde(default)]
+    pub onboarding_complete: bool,
+    /// User acknowledged unsigned-installer SmartScreen note.
+    #[serde(default)]
+    pub smartscreen_acked: bool,
 }
 
 impl InferenceSettings {
@@ -27,6 +36,9 @@ impl InferenceSettings {
             thread_count: hw.recommended.thread_count,
             max_tokens: 1024,
             user_customized: false,
+            last_model_id: None,
+            onboarding_complete: false,
+            smartscreen_acked: false,
         }
     }
 }
@@ -70,8 +82,7 @@ pub fn save_inference_settings(
     app: AppHandle,
     mut settings: InferenceSettings,
 ) -> Result<InferenceSettings, String> {
-    settings.user_customized = true;
-    // Clamp to sane ranges
+    // Clamp to sane ranges. Caller sets `user_customized` when inference knobs change.
     settings.context_length = settings.context_length.clamp(512, 131_072);
     settings.temperature = settings.temperature.clamp(0.0, 2.0);
     settings.gpu_layers = settings.gpu_layers.min(999);

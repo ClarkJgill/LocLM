@@ -100,6 +100,73 @@ pub fn detect() -> HardwareInfo {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveMetrics {
+    pub ram_used_mb: u64,
+    pub ram_total_mb: u64,
+    pub cpu_usage_pct: f32,
+    pub vram_used_mb: Option<u64>,
+    pub vram_total_mb: Option<u64>,
+}
+
+/// Lightweight live telemetry for the status strip.
+pub fn live_metrics() -> LiveMetrics {
+    let mut sys = System::new();
+    sys.refresh_memory();
+    sys.refresh_cpu_usage();
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    sys.refresh_cpu_usage();
+
+    let ram_total_mb = sys.total_memory() / (1024 * 1024);
+    let ram_used_mb = sys.used_memory() / (1024 * 1024);
+    let cpu_usage_pct = sys.global_cpu_usage();
+
+    let (vram_used_mb, vram_total_mb) = query_nvidia_smi_memory();
+
+    LiveMetrics {
+        ram_used_mb,
+        ram_total_mb,
+        cpu_usage_pct,
+        vram_used_mb,
+        vram_total_mb,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn query_nvidia_smi_memory() -> (Option<u64>, Option<u64>) {
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output();
+    let Ok(output) = output else {
+        return (None, None);
+    };
+    if !output.status.success() {
+        return (None, None);
+    }
+    let line = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<_> = line
+        .lines()
+        .next()
+        .unwrap_or("")
+        .split(',')
+        .map(|s| s.trim().parse::<u64>().ok())
+        .collect();
+    if parts.len() >= 2 {
+        (parts[0], parts[1])
+    } else {
+        (None, None)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn query_nvidia_smi_memory() -> (Option<u64>, Option<u64>) {
+    (None, None)
+}
+
 fn pick_backend(gpus: &[GpuInfo]) -> InferenceBackend {
     if gpus.iter().any(|g| g.vendor == GpuVendor::Nvidia) {
         return InferenceBackend::Cuda;

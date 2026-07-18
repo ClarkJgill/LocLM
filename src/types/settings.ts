@@ -5,4 +5,7 @@ export interface InferenceSettings {
   threadCount: number;
   maxTokens: number;
   userCustomized: boolean;
+  lastModelId: string | null;
+  onboardingComplete: boolean;
+  smartscreenAcked: boolean;
 }

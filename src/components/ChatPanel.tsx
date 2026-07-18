@@ -12,6 +12,12 @@ function now(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  return `${bytes} B`;
+}
+
 interface ChatPanelProps {
   conversation: Conversation;
   server: ServerStatus | null;
@@ -20,6 +26,11 @@ interface ChatPanelProps {
   loadingModel: boolean;
   temperature: number;
   maxTokens: number;
+  recommended: ModelLibraryEntry | null;
+  showOnboarding: boolean;
+  onboardingBusy: boolean;
+  onDownloadAndRun: (id: string) => void;
+  onDismissOnboarding: () => void;
   onConversationChange: (c: Conversation) => void;
   onPersist: (c: Conversation) => void;
   onNewChat: () => void;
@@ -33,6 +44,11 @@ export function ChatPanel({
   loadingModel,
   temperature,
   maxTokens,
+  recommended,
+  showOnboarding,
+  onboardingBusy,
+  onDownloadAndRun,
+  onDismissOnboarding,
   onConversationChange,
   onPersist,
   onNewChat,
@@ -46,6 +62,7 @@ export function ChatPanel({
 
   const ready =
     server?.phase === "ready" && !!server.baseUrl && !!server.modelPath;
+  const failed = server?.phase === "error";
   const activeName =
     library.find((e) => e.model.id === activeModelId)?.model.name ??
     (server?.modelPath
@@ -136,6 +153,16 @@ export function ChatPanel({
     abortRef.current?.abort();
   }
 
+  const statusLine = loadingModel
+    ? "Loading model into memory…"
+    : failed
+      ? "Model failed to start"
+      : server?.phase === "starting"
+        ? "Starting inference server…"
+        : ready && activeName
+          ? activeName
+          : "No model running";
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
@@ -143,12 +170,12 @@ export function ChatPanel({
           <h2 className="truncate font-mono text-[11px] tracking-wider text-text-muted uppercase">
             Chat
           </h2>
-          <p className="truncate text-sm text-text-primary">
-            {loadingModel
-              ? "Loading model…"
-              : activeName
-                ? activeName
-                : "No model running — click Run on a downloaded model"}
+          <p
+            className={`truncate text-sm ${
+              failed ? "text-signal-warn" : "text-text-primary"
+            }`}
+          >
+            {statusLine}
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -192,11 +219,59 @@ export function ChatPanel({
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
         {conversation.messages.length === 0 ? (
-          <p className="text-sm leading-relaxed text-text-muted">
-            {ready
-              ? "Ask anything. Tokens stream from your local model — nothing leaves this machine."
-              : "Download a starter model, then press Run. Chat appears here once the sidecar is ready."}
-          </p>
+          showOnboarding && recommended ? (
+            <div className="mx-auto flex max-w-md flex-col gap-4 pt-8">
+              <div>
+                <p className="font-mono text-[10px] tracking-wider text-text-muted uppercase">
+                  First run
+                </p>
+                <h3 className="mt-1 text-lg text-text-primary">
+                  Start with a recommended model
+                </h3>
+                <p className="mt-2 text-sm leading-relaxed text-text-muted">
+                  Based on your hardware, LocLM suggests{" "}
+                  <span className="text-text-primary">
+                    {recommended.model.name}
+                  </span>{" "}
+                  ({formatBytes(recommended.model.sizeBytes)}). Download and run
+                  it in one step — then send your first message.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={onboardingBusy || loadingModel}
+                onClick={() => onDownloadAndRun(recommended.model.id)}
+                className="border border-signal/50 bg-signal/10 px-4 py-3 font-mono text-[12px] tracking-wider text-signal uppercase disabled:opacity-40"
+              >
+                {onboardingBusy
+                  ? recommended.downloaded
+                    ? "Starting…"
+                    : "Downloading…"
+                  : recommended.downloaded
+                    ? "Run recommended model"
+                    : "Download & run recommended model"}
+              </button>
+              <button
+                type="button"
+                onClick={onDismissOnboarding}
+                className="self-start font-mono text-[10px] tracking-wider text-text-muted uppercase"
+              >
+                Skip for now
+              </button>
+            </div>
+          ) : (
+            <div className="mx-auto max-w-md pt-6">
+              <p className="text-sm leading-relaxed text-text-muted">
+                {ready
+                  ? "Ask anything. Tokens stream from your local model — nothing leaves this machine."
+                  : loadingModel || server?.phase === "starting"
+                    ? "Loading the model into memory. This can take a minute on first load."
+                    : failed
+                      ? "Something went wrong starting the model. Check the banner above, then try Stop and Run again — or lower GPU layers in Settings."
+                      : "Download a starter model, then press Run. Chat appears here once the sidecar is ready."}
+              </p>
+            </div>
+          )
         ) : (
           <ul className="mx-auto flex max-w-2xl flex-col gap-4">
             {conversation.messages.map((m) => (
@@ -245,7 +320,11 @@ export function ChatPanel({
             rows={2}
             disabled={!ready || loadingModel}
             placeholder={
-              ready ? "Message… (Enter to send)" : "Start a model to chat"
+              ready
+                ? "Message… (Enter to send)"
+                : loadingModel
+                  ? "Loading model…"
+                  : "Start a model to chat"
             }
             className="min-h-[52px] flex-1 resize-none border border-border bg-bg px-3 py-2 text-sm leading-relaxed text-text-primary outline-none placeholder:text-text-muted focus:border-signal/40 disabled:opacity-50"
           />

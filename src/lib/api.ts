@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Conversation } from "../types/chat";
-import type { HardwareInfo } from "../types/hardware";
+import type { HardwareInfo, LiveMetrics } from "../types/hardware";
 import type {
   DownloadProgress,
   ModelLibraryEntry,
@@ -10,6 +10,10 @@ import type { InferenceSettings } from "../types/settings";
 
 export function getHardwareInfo(): Promise<HardwareInfo> {
   return invoke<HardwareInfo>("get_hardware_info");
+}
+
+export function getLiveMetrics(): Promise<LiveMetrics> {
+  return invoke<LiveMetrics>("get_live_metrics");
 }
 
 export function getServerStatus(): Promise<ServerStatus> {

@@ -6,8 +6,9 @@
 use serde::Serialize;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::io::Read;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
 
@@ -54,6 +55,8 @@ pub struct InferenceServer {
 struct ServerInner {
     child: Option<Child>,
     status: ServerStatus,
+    /// Tail of sidecar stderr for failure diagnostics.
+    last_stderr: String,
 }
 
 impl InferenceServer {
@@ -62,6 +65,7 @@ impl InferenceServer {
             inner: Mutex::new(ServerInner {
                 child: None,
                 status: ServerStatus::default(),
+                last_stderr: String::new(),
             }),
         }
     }
@@ -165,9 +169,33 @@ impl InferenceServer {
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
 
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to start llama-server: {e}"))?;
+
+        let stderr_buf = Arc::new(Mutex::new(String::new()));
+        if let Some(mut stderr) = child.stderr.take() {
+            let buf = stderr_buf.clone();
+            std::thread::spawn(move || {
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match stderr.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if let Ok(mut g) = buf.lock() {
+                                g.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                                const MAX: usize = 8_000;
+                                if g.len() > MAX {
+                                    let drain = g.len() - MAX;
+                                    g.drain(..drain);
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
 
         let pid = child.id();
         let base_url = format!("http://127.0.0.1:{port}");
@@ -180,11 +208,12 @@ impl InferenceServer {
             binary_path: Some(binary.display().to_string()),
             model_path: model_path.clone(),
             message: if model_path.is_some() {
-                "Loading model…".into()
+                "Loading model into memory…".into()
             } else {
                 "Starting llama-server…".into()
             },
         };
+        guard.last_stderr.clear();
         guard.child = Some(child);
         drop(guard);
 
@@ -195,12 +224,22 @@ impl InferenceServer {
         };
         let ready = wait_until_ready(&base_url, timeout);
 
+        let stderr_tail = stderr_buf
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let stderr_hint = summarize_stderr(&stderr_tail);
+
         let mut guard = self.inner.lock().expect("server mutex");
+        guard.last_stderr = stderr_tail;
         self.refresh_locked(&mut guard);
         if guard.child.is_none() {
             guard.status.phase = ServerPhase::Error;
-            guard.status.message =
-                "llama-server exited before becoming ready. Check that Vulkan/GPU drivers are installed.".into();
+            guard.status.message = if stderr_hint.is_empty() {
+                "Model failed to start. Check that Vulkan/GPU drivers are installed, then try Unload and retry.".into()
+            } else {
+                format!("Model failed to start. {stderr_hint}")
+            };
             return Err(guard.status.message.clone());
         }
 
@@ -212,16 +251,26 @@ impl InferenceServer {
                         .file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or(path);
-                    format!("Ready · {name} · {base_url}")
+                    format!("Ready · {name}")
                 } else {
                     format!("Ready on {base_url} (router mode — no model loaded yet)")
                 };
                 Ok(guard.status.clone())
             }
             Err(msg) => {
-                guard.status.phase = ServerPhase::Unhealthy;
-                guard.status.message = msg.clone();
-                Err(msg)
+                let extra = stderr_buf.lock().map(|g| g.clone()).unwrap_or_default();
+                if !extra.is_empty() {
+                    guard.last_stderr = extra;
+                }
+                let hint = summarize_stderr(&guard.last_stderr);
+                Self::kill_locked(&mut guard)?;
+                guard.status.phase = ServerPhase::Error;
+                guard.status.message = if hint.is_empty() {
+                    format!("{msg}. Try lowering GPU layers in Settings, or Unload and retry.")
+                } else {
+                    format!("{msg}. {hint}")
+                };
+                Err(guard.status.message.clone())
             }
         }
     }
@@ -260,7 +309,12 @@ impl InferenceServer {
                     inner.child = None;
                     inner.status.phase = ServerPhase::Error;
                     inner.status.pid = None;
-                    inner.status.message = format!("llama-server exited ({status})");
+                    let hint = summarize_stderr(&inner.last_stderr);
+                    inner.status.message = if hint.is_empty() {
+                        format!("llama-server exited ({status})")
+                    } else {
+                        format!("llama-server exited ({status}). {hint}")
+                    };
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -397,6 +451,46 @@ pub fn resolve_llama_server(app: &AppHandle) -> Result<PathBuf, String> {
     Err(format!(
         "Could not find {exe_name} for {platform_dir}. Run scripts/fetch-llama.ps1 to download it."
     ))
+}
+
+fn summarize_stderr(stderr: &str) -> String {
+    let lower = stderr.to_lowercase();
+    let plain = if lower.contains("out of memory")
+        || lower.contains("failed to allocate")
+        || lower.contains("insufficient memory")
+    {
+        "Ran out of GPU/system memory. Try a smaller model or lower GPU layers in Settings."
+    } else if lower.contains("vulkan") && (lower.contains("error") || lower.contains("fail")) {
+        "Vulkan/GPU driver issue. Update your GPU drivers, then retry."
+    } else if lower.contains("cuda") && lower.contains("error") {
+        "GPU backend error. Update drivers or lower GPU layers in Settings."
+    } else if lower.contains("failed to load") || lower.contains("unable to load") {
+        "Could not load the model file. Re-download it from the library."
+    } else {
+        ""
+    };
+
+    let snippet = stderr
+        .lines()
+        .rev()
+        .find(|l| {
+            let t = l.trim();
+            !t.is_empty() && t.len() > 8
+        })
+        .unwrap_or("")
+        .trim();
+    let snippet = if snippet.len() > 180 {
+        format!("{}…", &snippet[..177])
+    } else {
+        snippet.to_string()
+    };
+
+    match (plain.is_empty(), snippet.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => plain.to_string(),
+        (true, false) => format!("Details: {snippet}"),
+        (false, false) => format!("{plain} Details: {snippet}"),
+    }
 }
 
 fn wait_until_ready(base_url: &str, timeout: Duration) -> Result<(), String> {

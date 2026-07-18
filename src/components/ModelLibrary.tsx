@@ -31,12 +31,14 @@ interface ModelLibraryProps {
   busyId: string | null;
   activeModelId: string | null;
   loadingModelId: string | null;
+  recommendedId: string | null;
   onDownload: (id: string) => void;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onCancel: (id: string) => void;
   onDelete: (id: string) => void;
   onRun: (id: string) => void;
+  onUnload: () => void;
 }
 
 export function ModelLibrary({
@@ -46,12 +48,14 @@ export function ModelLibrary({
   busyId,
   activeModelId,
   loadingModelId,
+  recommendedId,
   onDownload,
   onPause,
   onResume,
   onCancel,
   onDelete,
   onRun,
+  onUnload,
 }: ModelLibraryProps) {
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r border-border bg-surface">
@@ -104,6 +108,11 @@ export function ModelLibrary({
                     />
                   )}
                   {model.name}
+                  {recommendedId === model.id ? (
+                    <span className="font-mono text-[9px] tracking-wider text-signal uppercase">
+                      rec
+                    </span>
+                  ) : null}
                 </span>
                 <span className="font-mono text-[10px] text-text-muted">
                   {formatBytes(model.sizeBytes)}
@@ -165,12 +174,15 @@ export function ModelLibrary({
                   </>
                 )}
                 {isRunning && (
-                  <span className="font-mono text-[9px] tracking-wider text-signal uppercase">
-                    active
-                  </span>
-                )}
-                {!downloaded && !downloading && !paused && (
                   <button
+                    type="button"
+                    onClick={onUnload}
+                    className="border border-border px-2 py-1 font-mono text-[10px] tracking-wider text-text-primary uppercase"
+                  >
+                    Stop
+                  </button>
+                )}
+                {!downloaded && !downloading && !paused && (                  <button
                     type="button"
                     disabled={busyId !== null && busyId !== model.id}
                     onClick={() =>

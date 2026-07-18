@@ -8,7 +8,7 @@ use chat::{
     delete_conversation, list_conversations, load_conversation, new_conversation,
     save_conversation,
 };
-use hardware::HardwareInfo;
+use hardware::{HardwareInfo, LiveMetrics};
 use inference::{
     check_inference_health, get_server_status, resolve_llama_binary, start_inference_server,
     stop_inference_server, InferenceServer,
@@ -27,6 +27,11 @@ fn get_hardware_info() -> HardwareInfo {
     hardware::detect()
 }
 
+#[tauri::command]
+fn get_live_metrics() -> LiveMetrics {
+    hardware::live_metrics()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -35,6 +40,7 @@ pub fn run() {
         .manage(DownloadManager::new())
         .invoke_handler(tauri::generate_handler![
             get_hardware_info,
+            get_live_metrics,
             get_server_status,
             start_inference_server,
             stop_inference_server,

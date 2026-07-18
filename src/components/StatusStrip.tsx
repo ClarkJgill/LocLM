@@ -1,4 +1,6 @@
-import type { HardwareInfo } from "../types/hardware";
+import { useEffect, useState } from "react";
+import { getLiveMetrics } from "../lib/api";
+import type { HardwareInfo, LiveMetrics } from "../types/hardware";
 import type { ServerStatus } from "../types/server";
 
 function formatGb(mb: number): string {
@@ -30,28 +32,51 @@ function serverLabel(phase: ServerStatus["phase"] | undefined): string {
     case "ready":
       return "SRV READY";
     case "starting":
-      return "SRV START";
+      return "SRV LOAD";
     case "unhealthy":
       return "SRV WEAK";
     case "error":
-      return "SRV ERR";
+      return "SRV FAIL";
     default:
       return "SRV OFF";
   }
 }
 
 export function StatusStrip({ hw, hwReady, server }: StatusStripProps) {
-  const ramUsedPct = hw
-    ? Math.min(
-        100,
-        Math.round(
-          ((hw.totalMemoryMb - hw.availableMemoryMb) / hw.totalMemoryMb) * 100,
-        ),
-      )
-    : 0;
+  const [live, setLive] = useState<LiveMetrics | null>(null);
+  const polling =
+    server?.phase === "ready" ||
+    server?.phase === "starting" ||
+    server?.phase === "unhealthy";
+
+  useEffect(() => {
+    if (!polling) {
+      setLive(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = () => {
+      getLiveMetrics()
+        .then((m) => {
+          if (!cancelled) setLive(m);
+        })
+        .catch(() => undefined);
+    };
+    tick();
+    const id = window.setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [polling]);
+
+  const ramUsedMb = live?.ramUsedMb ?? (hw ? hw.totalMemoryMb - hw.availableMemoryMb : 0);
+  const ramTotalMb = live?.ramTotalMb ?? hw?.totalMemoryMb ?? 0;
+  const ramUsedPct =
+    ramTotalMb > 0 ? Math.min(100, Math.round((ramUsedMb / ramTotalMb) * 100)) : 0;
 
   return (
-    <footer className="flex h-8 shrink-0 items-center gap-4 border-t border-border bg-surface px-4 font-mono text-[11px] tracking-wide text-text-muted">
+    <footer className="flex h-8 shrink-0 items-center gap-4 overflow-x-auto border-t border-border bg-surface px-4 font-mono text-[11px] tracking-wide text-text-muted">
       <div className="flex items-center gap-2">
         <span
           className={`inline-block h-1.5 w-1.5 rounded-full ${
@@ -84,8 +109,7 @@ export function StatusStrip({ hw, hwReady, server }: StatusStripProps) {
           <span>
             RAM{" "}
             <span className="text-text-primary">
-              {formatGb(hw.totalMemoryMb - hw.availableMemoryMb)}/
-              {formatGb(hw.totalMemoryMb)} GB
+              {formatGb(ramUsedMb)}/{formatGb(ramTotalMb)} GB
             </span>{" "}
             <span className="text-text-muted">({ramUsedPct}%)</span>
           </span>
@@ -93,16 +117,32 @@ export function StatusStrip({ hw, hwReady, server }: StatusStripProps) {
           <span>
             CPU{" "}
             <span className="text-text-primary">
-              {hw.cpuCoresPhysical}C/{hw.cpuCoresLogical}T
+              {live
+                ? `${Math.round(live.cpuUsagePct)}%`
+                : `${hw.cpuCoresPhysical}C/${hw.cpuCoresLogical}T`}
             </span>
           </span>
-          <span className="text-border">│</span>
-          <span>
-            GPU{" "}
-            <span className="text-text-primary">
-              {hw.gpus[0]?.name ?? "NONE"}
-            </span>
-          </span>
+          {live?.vramTotalMb != null && live.vramUsedMb != null ? (
+            <>
+              <span className="text-border">│</span>
+              <span>
+                VRAM{" "}
+                <span className="text-text-primary">
+                  {formatGb(live.vramUsedMb)}/{formatGb(live.vramTotalMb)} GB
+                </span>
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="text-border">│</span>
+              <span>
+                GPU{" "}
+                <span className="text-text-primary">
+                  {hw.gpus[0]?.name ?? "NONE"}
+                </span>
+              </span>
+            </>
+          )}
           <span className="text-border">│</span>
           <span>
             BACKEND{" "}

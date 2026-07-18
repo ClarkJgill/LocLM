@@ -33,3 +33,11 @@ export interface HardwareInfo {
   primaryBackend: InferenceBackend;
   recommended: RecommendedSettings;
 }
+
+export interface LiveMetrics {
+  ramUsedMb: number;
+  ramTotalMb: number;
+  cpuUsagePct: number;
+  vramUsedMb: number | null;
+  vramTotalMb: number | null;
+}
