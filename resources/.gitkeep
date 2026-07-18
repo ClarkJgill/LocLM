@@ -1,0 +1,5 @@
+# Platform-specific llama.cpp server binaries land here in phase 3.
+# Expected layout:
+#   windows-x86_64/llama-server.exe
+#   macos-aarch64/llama-server
+#   linux-x86_64/llama-server

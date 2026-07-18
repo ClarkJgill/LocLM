@@ -1,0 +1,4 @@
+llama.cpp b10064
+backend=vulkan
+platform=windows-x86_64
+source=https://github.com/ggml-org/llama.cpp/releases/tag/b10064
